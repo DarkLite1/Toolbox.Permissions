@@ -223,7 +223,6 @@ Function Add-AclHC {
         }
     }
 }
-
 Function Add-LocalAdministratorAccountHC {
     <#
         .SYNOPSIS
@@ -329,7 +328,6 @@ Function Add-LocalAdministratorAccountHC {
         Remove-Job -Job $Jobs -Force -EA Ignore
     }
 }
-
 Function Remove-LocalAdministratorAccountHC {
     <#
         .SYNOPSIS
@@ -402,7 +400,6 @@ Function Remove-LocalAdministratorAccountHC {
         }
     }
 }
-
 Function Get-AccessBasedEnumerationHC {
     <#
     .SYNOPSIS
@@ -619,7 +616,6 @@ Function Get-AccessBasedEnumerationHC {
         }
     }
 }
-
 Workflow Get-DFSDetailsHC {
     <#
     .SYNOPSIS
@@ -812,49 +808,6 @@ public class Win32Api {
     }
 }
 
-Function New-PasswordFileHC {
-    <#
-    .SYNOPSIS
-        Create a hashed password file.
-
-    .DESCRIPTION
-        Create a hashed password file for later use in scripts.
-
-    .PARAMETER Path
-        Location to store the hashed password file.
-
-    .EXAMPLE
-        New-PasswordFileHC -Path 'T:\Passwords'
-        Create a new hashed password file in the folder 'T:\Passwords'
-    #>
-
-    [CmdletBinding()]
-    Param(
-        [ValidateScript({ Test-Path $_ -PathType Container })]
-        [String]$Path = 'T:\Input\Passwords'
-    )
-
-    Begin {
-        $UserName = $env:USERNAME.ToUpper()
-        $File = "$(Join-Path $Path -ChildPath $UserName).txt"
-        $Password = Read-Host 'Please enter your password' -AsSecureString
-    }
-
-    Process {
-        $Hash = ConvertFrom-SecureString $Password
-
-        # Workaround for not being able to overwrite 'hidden files'
-        if (Test-Path $File) {
-            Set-ItemProperty $File -Name Attributes -Value 'Normal'
-        }
-
-        $Hash | Out-File $File -Force
-        Set-ItemProperty $File -Name Attributes -Value 'Hidden'
-
-        Write-Output "Password file generated: '$File'"
-    }
-}
-
 Workflow Out-PermissionsOnFolderHC {
     <#
     .SYNOPSIS
@@ -996,7 +949,6 @@ Date: $((Get-Date).ToString('dd/MM/yyyy HH:mm'))
         }
     }
 }
-
 Function Push-AclInheritanceHC {
     <#
     .SYNOPSIS
@@ -1141,14 +1093,13 @@ using System.Runtime.InteropServices;
 
             # Add file Admins to ACL with Full Control and activate inheritance
             $acl = Get-Acl -Path $ReadFile
-            $aclr = New-Object  system.security.accesscontrol.filesystemaccessrule('BUILTIN\Administrators', 'FullControl', 'Allow')
+            $aclr = New-Object System.Security.AccessControl.FileSystemAccessRule('BUILTIN\Administrators', 'FullControl', 'Allow')
             $acl.SetAccessRule($aclr)
             Set-Acl $_ $acl
         }
         Remove-Item $ReadFile
     }
 }
-
 Function Remove-AclHC {
     <#
     .SYNOPSIS
@@ -1185,7 +1136,9 @@ Function Remove-AclHC {
 
     Begin {
         Function Remove-Permissions {
-            $ACL.Access | ForEach-Object { $ACL.purgeaccessrules($_.IdentityReference) }
+            $ACL.Access | ForEach-Object { 
+                $ACL.PurgeAccessRules($_.IdentityReference) 
+            }
             $ACL.SetAccessRuleProtection($true, $false)
         }
 
@@ -1252,7 +1205,6 @@ Function Remove-AclHC {
         }
     }
 }
-
 Function Set-AccessBasedEnumerationHC {
     <#
     .SYNOPSIS
