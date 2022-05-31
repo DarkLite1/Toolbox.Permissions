@@ -1123,7 +1123,9 @@ Function Remove-AclHC {
 
     .EXAMPLE
         Remove the permissions from all the subfolders of the folder 'SafeQ'
-        Get-ChildItem 'T:\Test\Input_Test\SafeQ' -Recurse | Remove-AclHC -Verbose
+        
+        Get-ChildItem 'T:\Test\Input_Test\SafeQ' -Recurse | 
+        Remove-AclHC -Verbose
     #>
 
     [CmdletBinding()]
