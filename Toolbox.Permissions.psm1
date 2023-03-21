@@ -743,8 +743,12 @@ public class Win32Api {
                     }
 
                     # State 6 indicates that the DFS path is online and active
-                    [Win32Api]::NetDfsGetClientInfo($P) | Where-Object State -EQ 6 |
-                    Select-Object @{N = 'Path'; E = { $P } }, ServerName, ShareName
+                    [Win32Api]::NetDfsGetClientInfo($P) | 
+                    Where-Object { $_.State -EQ 6 } |
+                    Select-Object @{
+                        Name       = 'Path'
+                        Expression = { $P } 
+                    }, ServerName, ShareName
                 }
                 Catch {
                     Write-Error "Failed retrieving DFS details for path '$P': $_"
@@ -753,10 +757,18 @@ public class Win32Api {
         }
 
         $Shares = InlineScript {
-            foreach ($ServerName in ($Using:DFS.ServerName | Sort-Object -Unique)) {
-                foreach ($ShareName in (($Using:DFS | 
-                            Where-Object { $_.ServerName -eq $ServerName }).ShareName |
-                        Sort-Object -Unique)) {
+            foreach (
+                $ServerName in 
+                ($Using:DFS.ServerName | Sort-Object -Unique)
+            ) {
+                foreach (
+                    $ShareName in 
+                    (
+                        ($Using:DFS | Where-Object { 
+                            $_.ServerName -eq $ServerName 
+                        }).ShareName | Sort-Object -Unique
+                    )
+                ) {
                     Try {
                         Write-Verbose "Get local path for share '$ShareName' on '$ServerName'"
 
@@ -769,9 +781,18 @@ public class Win32Api {
                         }
                         Get-CimInstance @Params | 
                         Where-Object { $_.Name -EQ $ShareName } |
-                        Select-Object @{N = 'ComputerName'; E = { $_.PSComputerName } },
-                        @{N = 'ComputerPath'; E = { $_.Path } },
-                        @{N = 'ShareName'; E = { $ShareName } }
+                        Select-Object @{
+                            Name       = 'ComputerName'
+                            Expression = { $_.PSComputerName } 
+                        },
+                        @{
+                            Name       = 'ComputerPath'
+                            Expression = { $_.Path } 
+                        },
+                        @{
+                            Name       = 'ShareName'
+                            Expression = { $ShareName } 
+                        }
                     }
                     Catch {
                         Write-Error "Failed retrieving DFS details for path '$ShareName' on '$ServerName': $_"
@@ -791,8 +812,18 @@ public class Win32Api {
                             ($_.ServerName -eq $S.ComputerName) -and
                             ($_.ShareName -eq $S.ShareName)
                         } |
-                        Select-Object Path, @{N = 'ComputerName'; E = { $_.ServerName } },
-                        @{N = 'ComputerPath'; E = { $S.ComputerPath + '\' + (Split-Path $_.Path -Leaf) } }
+                        Select-Object Path, 
+                        @{
+                            Name       = 'ComputerName'
+                            Expression = { $_.ServerName }
+                        },
+                        @{
+                            Name       = 'ComputerPath' 
+                            Expression = { 
+                                $S.ComputerPath + '\' +
+                                 (Split-Path $_.Path -Leaf) 
+                            } 
+                        }
 
                         if ($Result) {
                             Write-Verbose "'$($Result.Path)', '$($Result.ComputerName)', '$($Result.ComputerPath)'"
