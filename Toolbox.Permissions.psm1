@@ -616,7 +616,7 @@ Function Get-AccessBasedEnumerationHC {
         }
     }
 }
-Workflow Get-DFSDetailsHC {
+Function Get-DFSDetailsHC {
     <#
     .SYNOPSIS
         Gets DNS details for a UNC path.
@@ -652,8 +652,7 @@ Workflow Get-DFSDetailsHC {
         [String[]]$Path
     )
 
-    Sequence {
-        $Signature = @'
+    $signature = @'
 using System;
 using System.Collections.Generic;
 using System.Management.Automation;
@@ -727,258 +726,109 @@ public class Win32Api {
 }
 '@
 
-        $DFS = foreach -parallel ($P in $Path) {
-            InlineScript {
-                Try {
-                    $P = $Using:P
+    if (-not ('Win32Api' -as [Type])) {
+        Add-Type -TypeDefinition $signature
+    }
 
-                    Write-Verbose "Get DFS client info for '$P'"
+    #region Get DFS client details
+    $dfsClientDetails = foreach ($P in $Path) {
+        Try {
+            Write-Verbose "Get DFS client info for '$P'"
 
-                    if (-not (Test-Path -LiteralPath $P -PathType Container)) {
-                        throw 'Path not found'
-                    }
+            if (-not (Test-Path -LiteralPath $P -PathType Container)) {
+                throw 'Path not found'
+            }
 
-                    if (-not ('Win32Api' -as [Type])) {
-                        Add-Type -TypeDefinition $Using:Signature
-                    }
+            # State 6 indicates that the DFS path is online and active
+            [Win32Api]::NetDfsGetClientInfo($P) | 
+            Where-Object { $_.State -EQ 6 } |
+            Select-Object @{
+                Name       = 'Path'
+                Expression = { $P } 
+            }, ServerName, ShareName
+        }
+        Catch {
+            Write-Error "Failed retrieving DFS details for path '$P': $_"
+        }
+    }
+    #endregion
 
-                    # State 6 indicates that the DFS path is online and active
-                    [Win32Api]::NetDfsGetClientInfo($P) | 
-                    Where-Object { $_.State -EQ 6 } |
-                    Select-Object @{
-                        Name       = 'Path'
-                        Expression = { $P } 
-                    }, ServerName, ShareName
+    #region Get shares    
+    $Shares = foreach (
+        $serverName in 
+        ($dfsClientDetails.ServerName | Sort-Object -Unique)
+    ) {
+        foreach (
+            $ShareName in 
+            (
+                ($dfsClientDetails.where({ $_.ServerName -eq $serverName })).ShareName | 
+                Sort-Object -Unique
+            )
+        ) {
+            Try {
+                Write-Verbose "Get local path for share '$ShareName' on '$serverName'"
+
+                $Params = @{
+                    ComputerName        = $serverName
+                    ClassName           = 'Win32_Share'
+                    OperationTimeoutSec = 20
+                    Verbose             = $false
+                    ErrorAction         = 'Stop'
                 }
-                Catch {
-                    Write-Error "Failed retrieving DFS details for path '$P': $_"
+                Get-CimInstance @Params | 
+                Where-Object { $_.Name -EQ $ShareName } |
+                Select-Object @{
+                    Name       = 'ComputerName'
+                    Expression = { $_.PSComputerName } 
+                },
+                @{
+                    Name       = 'ComputerPath'
+                    Expression = { $_.Path } 
+                },
+                @{
+                    Name       = 'ShareName'
+                    Expression = { $ShareName } 
                 }
             }
-        }
-
-        $Shares = InlineScript {
-            foreach (
-                $ServerName in 
-                ($Using:DFS.ServerName | Sort-Object -Unique)
-            ) {
-                foreach (
-                    $ShareName in 
-                    (
-                        ($Using:DFS | Where-Object { 
-                            $_.ServerName -eq $ServerName 
-                        }).ShareName | Sort-Object -Unique
-                    )
-                ) {
-                    Try {
-                        Write-Verbose "Get local path for share '$ShareName' on '$ServerName'"
-
-                        $Params = @{
-                            ComputerName        = $ServerName
-                            ClassName           = 'Win32_Share'
-                            OperationTimeoutSec = 20
-                            Verbose             = $false
-                            ErrorAction         = 'Stop'
-                        }
-                        Get-CimInstance @Params | 
-                        Where-Object { $_.Name -EQ $ShareName } |
-                        Select-Object @{
-                            Name       = 'ComputerName'
-                            Expression = { $_.PSComputerName } 
-                        },
-                        @{
-                            Name       = 'ComputerPath'
-                            Expression = { $_.Path } 
-                        },
-                        @{
-                            Name       = 'ShareName'
-                            Expression = { $ShareName } 
-                        }
-                    }
-                    Catch {
-                        Write-Error "Failed retrieving DFS details for path '$ShareName' on '$ServerName': $_"
-                    }
-                }
+            Catch {
+                Write-Error "Failed retrieving DFS details for path '$ShareName' on '$serverName': $_"
             }
         }
-
-        foreach -parallel ($D in $DFS) {
-            InlineScript {
-                Try {
-                    $D = $Using:D
-                    $Shares = $Using:Shares
-
-                    foreach ($S in $Shares) {
-                        $Result = $D | Where-Object {
+    }
+    #endregion
+    
+    #region Create output
+    foreach ($D in $dfsClientDetails) {
+        Try {
+            foreach ($S in $Shares) {
+                $Result = $D | Where-Object {
                             ($_.ServerName -eq $S.ComputerName) -and
                             ($_.ShareName -eq $S.ShareName)
-                        } |
-                        Select-Object Path, 
-                        @{
-                            Name       = 'ComputerName'
-                            Expression = { $_.ServerName }
-                        },
-                        @{
-                            Name       = 'ComputerPath' 
-                            Expression = { 
-                                $S.ComputerPath + '\' +
+                } |
+                Select-Object Path, 
+                @{
+                    Name       = 'ComputerName'
+                    Expression = { $_.ServerName }
+                },
+                @{
+                    Name       = 'ComputerPath' 
+                    Expression = { 
+                        $S.ComputerPath + '\' +
                                  (Split-Path $_.Path -Leaf) 
-                            } 
-                        }
-
-                        if ($Result) {
-                            Write-Verbose "'$($Result.Path)', '$($Result.ComputerName)', '$($Result.ComputerPath)'"
-                            $Result
-                        }
-                    }
+                    } 
                 }
-                Catch {
-                    Write-Error "Failed retrieving DFS details: $_"
+
+                if ($Result) {
+                    Write-Verbose "'$($Result.Path)', '$($Result.ComputerName)', '$($Result.ComputerPath)'"
+                    $Result
                 }
             }
         }
-    }
-}
-
-Workflow Out-PermissionsOnFolderHC {
-    <#
-    .SYNOPSIS
-        Retrieve permissions for a specific user on a specific folder and export
-        them to a file.
-
-    .DESCRIPTION
-        Retrieve the permissions set on a folder for a specific users based on 
-        SamAccountName. The tool AccessCheck from SysInternals is used. The 
-        results are saved in a file per user name and per location.
-
-    .PARAMETER AccessChk
-        Full path to the AccessChk executable from SysInternals.
-
-    .PARAMETER SamAccountName
-        Name of the user in active directory.
-
-    .PARAMETER Path
-        Path where to check the permissions.
-
-    .EXAMPLE
-        Generates one output file per folder per user with only the read and 
-        read/write permissions in them.
-    
-        $PermParams = @{
-            Path = @(Get-ChildItem '\\contoso.net\bnl\Departments' | 
-                Where-Object {Test-Path $_.FullName} |
-                Select-Object -ExpandProperty FullName) + '\\contoso.net\bnl'
-            SamAccountName = @('bob','mike')
-            LogFolder = 'T:\Log'
-        }
-        Out-PermissionsOnFolderHC @PermParams -Verbose
-
-    .NOTES
-        Accesschk v6.10 - Reports effective permissions for securable objects
-        Copyright (C) 2006-2016 Mark Russinovich
-        Sysinternals - www.sysinternals.com
-
-        usage: accesschk [-s][-e][-u][-r][-w][-n][-v]-[f <account>,...][[-a]|[-k]|[-m]|[-p [-f] [-t]]|[-h][-o [-t <obje
-        ct type>]][-c]|[-d]] [[[-l|-L] [-i]]|[username]] <file, directory, event log, registry key, process, service, o
-        bject>
-           -a     Name is a Windows account right. Specify '*' as the name to show all
-                  rights assigned to a user. Note that when you specify a specific
-                  right, only groups and accounts directly assigned the right are
-                  displayed.
-           -c     Name is a Windows Service e.g. ssdpsrv. Specify '*' as the
-                  name to show all services and 'scmanager' to check the security
-                  of the Service Control Manager.
-           -d     Only process directories or top level key.
-           -e     Only show explicitly set Integrity Levels (Windows Vista and
-                  higher only).
-           -f     If following -p, shows full process token information including
-                  groups and privileges. Otherwise is a list of comma-separated
-                  accounts to filter from the output.
-           -h     Name is a file or printer share. Specify '*' as the name to show
-                  all shares.
-           -i     Ignore objects with only inherited ACEs when dumping full access
-                  control lists.
-           -k     Name is a Registry key e.g. hklm\software
-           -l     Show full security descriptor. Add -i to ignore inherited ACEs.
-                  Specify upper-case L to have the output format as SDDL.
-           -m     Name is an event log (specify '*' as the name to show all event logs.
-           -n     Show only objects that have no access.
-           -o     Name is an object in the Object Manager namespace (default is root).
-                  To view the contents of a directory, specify the name with a trailing
-                  backslash or add -s. Add -t and an object type (e.g. section) to
-                  see only objects of a specific type.
-           -p     Name is a process name or PID e.g. cmd.exe (specify '*' as the
-                  name to show all processes). Add -f to show full process
-                  token information including groups and privileges. Add -t to show
-                  threads.
-           -nobanner
-                  Do not display the startup banner and copyright message.
-           -r     Show only objects that have read access.
-           -s     Recurse.
-           -t     Object type filter e.g. "section"
-           -u     Suppress errors.
-           -v     Verbose (includes Windows Vista Integrity Level).
-           -w     Show only objects that have write access.
-
-        If you specify a user or group name and path AccessChk will report the
-        effective permissions for that account; otherwise it will show the effective
-        access for accounts referenced in the security descriptor.
-
-        By default the path name is interpreted as a file system path (use the
-        "\pipe\" prefix to specify a named pipe path). For each object AccessChk
-        prints R if the account has read access, W for write access and nothing if
-        it has neither. The -v switch has AccessChk dump the specific
-        accesses granted to an account.
-    #>
-
-    [CmdLetBinding()]
-    Param (
-        [ValidateNotNullOrEmpty()]
-        [ValidateScript({ Test-Path -Path $_ -Type Leaf })]
-        [String]$AccessChk = 'D:\Sysinternals\AccessChk\accessChk64.exe',
-        [Parameter(Mandatory)]
-        [ValidateScript({ Get-ADObject -Filter { SamAccountName -eq $_ } })]
-        [String[]]$SamAccountName,
-        [Parameter(Mandatory)]
-        [ValidateScript({ Test-Path -Path $_ -Type Container })]
-        [String[]]$Path,
-        [Parameter(Mandatory)]
-        [ValidateScript({ Test-Path -Path $_ -Type Container })]
-        [String]$LogFolder
-    )
-
-    foreach -parallel ($S in $SamAccountName) {
-        $Details = Get-ADObject -Filter { SamAccountName -eq $S }
-
-        foreach -parallel ($P in $Path) {
-            Write-Verbose "SamAccountName '$S' check folder '$P'"
-
-            InlineScript {
-                Try {
-                    $P = Get-Item $Using:P
-                    $LogFile = Join-Path $Using:LogFolder ($Using:Details.Name + ' ' + $P.BaseName + ' .txt')
-
-                    if (Test-Path $LogFile) {
-                        throw "Log file '$LogFile' already exists"
-                    }
-
-                    $Intro = @"
-Name: $($Using:Details.Name)
-SamAccountName: $Using:S
-Path: $P
-Date: $((Get-Date).ToString('dd/MM/yyyy HH:mm'))
-
-"@
-                    $Intro | Out-File $LogFile
-                    &$Using:AccessChk $Using:S $P -usd -nobanner | Where-Object { $_ -match '^R|^RW' } | Out-File $LogFile -Append
-                }
-                Catch {
-                    throw "Failed getting the permissions for user '$($Using:S)' on folder '$P': $_"
-                }
-            }
-
-            Write-Verbose "SamAccountName '$S' check folder '$P' done"
+        Catch {
+            Write-Error "Failed retrieving DFS details: $_"
         }
     }
+    #endregion
 }
 Function Push-AclInheritanceHC {
     <#
