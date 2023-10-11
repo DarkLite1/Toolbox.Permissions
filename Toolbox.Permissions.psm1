@@ -731,7 +731,7 @@ public class Win32Api {
     }
 
     #region Get DFS client details
-    $dfsClientDetails = foreach ($P in $Path) {
+    [array]$dfsClientDetails = foreach ($P in $Path) {
         Try {
             Write-Verbose "Get DFS client info for '$P'"
 
